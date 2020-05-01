@@ -1,0 +1,142 @@
+---
+title: "Data cleaning in R()"
+author: "Teammates: Dongzhe Zhang, Kunpeng Huang, Chengyu Liang, Haolan Ma, Yihan Jiang, Meiling Zhang"
+date: "4/4/2020"
+output: pdf_document
+---
+
+### Set up
+```{r message=FALSE}
+library(tidyverse)
+library(ggthemes) 
+library(randomForest) 
+library(gbm)
+library(MASS)
+library(dplyr)
+library(tidyr)
+library(glmnet)
+library(rpart) 
+library(rpart.plot)
+theme_set(theme_economist())
+```
+
+### Data Cleaning
+```{r message=F}
+dd <- read_csv("/Users/maggie/Documents/BU/BA 810/home-credit-default-risk/application_train.csv")
+```
+
+1. A lot of columns contain missing values. 
+Instead of replacing them with the median, we would take the columns that have more than 40% NA's out.
+```{r}
+# calculate the missing values proportion for each variable
+na_prop <- colSums(is.na(dd)) / nrow(dd)
+# Find the variables that have over 40% missing values
+na_40 <- sort(na_prop[na_prop > 0.4], decreasing = TRUE)
+# remove these columns
+dd <- dd[ ,!names(dd) %in% names(na_40)]
+```
+
+2. There are columns that we don't understanding the meaning of such as `FLAG_DOCUMENT` and `SOCIAL_CIRCLE`. Since we cannot find any additional information about them, we decided to remove these variables as well.
+```{r}
+dd = dd[-grep("FLAG_DOCUMENT",colnames(dd))]
+dd = dd[-grep("SOCIAL_CIRCLE",colnames(dd))]
+```
+
+We also decided to remove any column that contains `CITY` in them since there are other columns that define the applicant's `REGION` and some variables that describe the characteristics of the `REGION`, using `CITY` again seems redundant and overlapping.
+```{r}
+dd = dd[-grep("CITY", colnames(dd))]
+```
+
+Because of the same reason, we decided to remove some of the columns that contain `AMT_REQ_CREDIT_BUREAU`, only keep `AMT_REQ_CREDIT_BUREAU_WEEK` represent short-term count of credit requirements and `AMT_REQ_CREDIT_BUREAU_YEAR` as long_term count of credit requirements.
+
+```{r}
+names = c("AMT_REQ_CREDIT_BUREAU_HOUR", "AMT_REQ_CREDIT_BUREAU_DAY", "AMT_REQ_CREDIT_BUREAU_MON", "AMT_REQ_CREDIT_BUREAU_QRT")
+dd = dd[,-which(names(dd) %in% names) ]
+```
+
+
+3. `DAYS_EMPLOYED` represents the days that the applicant is employed until the application date, which whould be all negative in this dataset. Therefore, the value `365243` in `DAYS_EMPLOYED` column seems unreasonable and we would replace it with 0.
+```{r}
+dd$DAYS_EMPLOYED[which(dd$DAYS_EMPLOYED == 365243)] <- 0
+```
+
+For better understanding of the data, we also need to convert `DAYS_EMPLOYED`, `DAYS_BIRTH`, `DAYS_PUBLISH` and `DAYS_REGISTRATION`, which are presented as negative in the dataset, to positive number in years.
+```{r}
+dd$DAYS_EMPLOYED[which(dd$DAYS_EMPLOYED == 365243)] <- 0
+dd$DAYS_EMPLOYED = abs(dd$DAYS_EMPLOYED)/365 %>% floor()
+dd$DAYS_BIRTH = abs(dd$DAYS_BIRTH)/365 %>% floor()
+dd$DAYS_ID_PUBLISH = abs(dd$DAYS_ID_PUBLISH)/365 %>% floor()
+dd$DAYS_REGISTRATION = abs(dd$DAYS_REGISTRATION)/365 %>% floor()
+```
+
+4. There are some false entries in `AMT_REQ_CREDIT_BUREAU_WEEK` and `AMT_REQ_CREDIT_BUREAU_YEAR`, so we removed all observations with false entries.
+```{r}
+dd<-dd%>% filter((is.na(AMT_REQ_CREDIT_BUREAU_WEEK)&is.na(AMT_REQ_CREDIT_BUREAU_YEAR))|
+                               (AMT_REQ_CREDIT_BUREAU_WEEK <=AMT_REQ_CREDIT_BUREAU_YEAR))
+```
+
+Remove XNA in `CODE_GENDER`
+```{r}
+dd <- dd %>% filter(CODE_GENDER != "XNA")
+```
+
+Set XNA in `ORGANIZATION_TYPE` to `Not_provide`
+```{r}
+dd[dd=="XNA"] <- "Not Provided"
+```
+
+5. With columns that are left with less than 40% NA's in them, we replaced those NA's with the median of the variable.
+```{r}
+ext2_median <- median(dd$EXT_SOURCE_2, na.rm = TRUE)
+ext3_median <- median(dd$EXT_SOURCE_3, na.rm = TRUE)
+ 
+dd<- dd%>% replace_na(list(EXT_SOURCE_2 = ext2_median, 
+                           EXT_SOURCE_3 = ext3_median))
+
+phonechange_median <- median(dd$DAYS_LAST_PHONE_CHANGE, na.rm = TRUE)
+dd<- dd%>% replace_na(list(DAYS_LAST_PHONE_CHANGE = phonechange_median))
+
+week_median <- median(dd$AMT_REQ_CREDIT_BUREAU_WEEK, na.rm = TRUE)
+year_median <- median(dd$AMT_REQ_CREDIT_BUREAU_YEAR, na.rm = TRUE)
+ 
+dd<- dd%>% replace_na(list(AMT_REQ_CREDIT_BUREAU_WEEK = week_median, 
+                           AMT_REQ_CREDIT_BUREAU_YEAR = year_median))
+```
+
+We replaced NA in `Annuity` to 0
+```{r}
+dd$AMT_ANNUITY[is.na(dd$AMT_ANNUITY)] <- 0
+```
+
+We replace NA in `Good Price` column to 0
+```{r}
+dd$AMT_GOODS_PRICE[is.na(dd$AMT_GOODS_PRICE)] <- 0
+```
+
+We also removed unkown family status observations in the data.
+```{r}
+unknow_status = which(is.na(dd$CNT_FAM_MEMBERS))
+dd = dd[-unknow_status,]
+```
+
+We then set other NA's as "not_provided" level
+```{r}
+dd[is.na(dd)] <- "Not Provided"
+```
+
+
+And last but not least, we factored all the columns in the dataset.
+```{r}
+dd <- as.data.frame(unclass(dd))
+```
+
+6. we also created another dataset that has converted all the categorical variables into dummy variables in the datset. Since some models cannot automatically deal with categorical variables. 
+```{r}
+dmy <- dummyVars(formula = ~., data = dd, fullRank = TRUE)
+dummy_train <- data.frame(predict(dmy, newdata = dd))
+
+write.csv(dummy_train,'dummy.csv')
+```
+
+
+
